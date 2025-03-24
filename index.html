@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Railway Station Navigation</title>
+    <link href="https://api.mapbox.com/mapbox-gl-js/v2.8.1/mapbox-gl.css" rel="stylesheet" />
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+			background-color: black;
+            font-family: Arial, sans-serif;
+        }
+
+        #map {
+            width: 100%;
+            height: 85vh;
+        }
+
+        #controls {
+            position: absolute;
+            top: 590px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: white;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+        }
+
+        button {
+            margin: 5px;
+            padding: 10px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        input {
+            padding: 10px;
+            width: 200px;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+        }
+
+        #instructions {
+            position: absolute;
+            top: 100px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: white;
+            padding: 10px;
+            border-radius: 5px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+            max-width: 300px;
+            display: none;
+        }
+    </style>
+</head>
+
+<body>
+
+    <div id="map"></div>
+    <div id="controls">
+        <button id="ticketCounterBtn">Nearby Ticket Counter</button>
+        <button id="restroomBtn">Nearby Restroom</button>
+        <button id="platformBtn">Nearby Platform</button>
+        <input type="text" id="searchBox" placeholder="Search destination..." />
+        <button id="searchBtn">Search</button>
+        <button id="setLocationBtn">Set My Location</button>
+        <button id="clearLocationBtn">Clear My Location</button>
+        <button id="voiceNavigationButton">Start Voice Navigation</button>
+    </div>
+    <div id="instructions"></div>
+
+    <script src="https://api.mapbox.com/mapbox-gl-js/v2.8.1/mapbox-gl.js"></script>
+    <script>
+        // Initialize Mapbox
+        mapboxgl.accessToken = 'pk.eyJ1Ijoic29oYWlsMTE5IiwiYSI6ImNtMWc0eHg2bjAwODUyaW85cnd3bWtocWsifQ.jQHcKKHn0LIUXziWjl24lg';
+        const map = new mapboxgl.Map({
+            container: 'map',
+            style: 'mapbox://styles/mapbox/streets-v11',
+            center: [72.8347, 18.9402], // CST Railway Station coordinates
+            zoom: 15
+        });
+
+        const instructionsDiv = document.getElementById('instructions');
+        let customLocation = null; // Variable to store custom location
+        let customMarker = null; // Variable to store custom marker
+
+        // Add navigation control to the map
+        const nav = new mapboxgl.NavigationControl();
+        map.addControl(nav, 'top-right');
+
+        // Facilities coordinates
+        const facilities = {
+            ticketCounter: [72.8340, 18.9405], // Example coordinates
+            restroom: [72.8350, 18.9410], // Example coordinates
+            platform: [72.8360, 18.9395] // Example coordinates
+        };
+
+        // Function to get user's current location
+        function getUserLocation(callback) {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(position => {
+                    const userCoords = [position.coords.longitude, position.coords.latitude];
+                    callback(userCoords);
+                }, () => alert('Unable to retrieve your location.'));
+            } else {
+                alert('Geolocation is not supported by this browser.');
+            }
+        }
+
+        // Function to navigate to selected facility and show path
+        function navigateToFacility(coordinates, label, fromLocation) {
+            const startCoords = fromLocation || [72.8347, 18.9402]; // Default to CST if no custom location is set
+            const directionsUrl = `https://api.mapbox.com/directions/v5/mapbox/driving/${startCoords[0]},${startCoords[1]};${coordinates[0]},${coordinates[1]}?geometries=geojson&access_token=${mapboxgl.accessToken}`;
+
+            fetch(directionsUrl)
+                .then(response => response.json())
+                .then(data => {
+                    const route = data.routes[0].geometry.coordinates;
+                    const path = route.map(coord => [coord[0], coord[1]]);
+
+                    // Clear previous routes
+                    if (map.getLayer('route')) {
+                        map.removeLayer('route');
+                        map.removeSource('route');
+                    }
+
+                    // Add route to map
+                    map.addSource('route', {
+                        'type': 'geojson',
+                        'data': {
+                            'type': 'Feature',
+                            'geometry': {
+                                'type': 'LineString',
+                                'coordinates': path
+                            }
+                        }
+                    });
+
+                    map.addLayer({
+                        'id': 'route',
+                        'type': 'line',
+                        'source': 'route',
+                        'layout': {
+                            'line-join': 'round',
+                            'line-cap': 'round'
+                        },
+                        'paint': {
+                            'line-color': '#007bff',
+                            'line-width': 5
+                        }
+                    });
+
+                    // Add marker for the facility
+                    new mapboxgl.Marker().setLngLat(coordinates).addTo(map);
+
+                    // Display instructions
+                    instructionsDiv.innerHTML = `<strong>Directions to ${label}:</strong><br>`;
+                    instructionsDiv.innerHTML += `Follow the highlighted route.`;
+                    instructionsDiv.style.display = 'block';
+
+                    // Voice feedback in Hindi
+                    const speech = new SpeechSynthesisUtterance();
+                    speech.text = `Navigating to the ${label}. Follow the highlighted route.`;
+                    speech.lang = "en-US";
+                    window.speechSynthesis.speak(speech);
+                });
+        }
+
+        // Set custom location on map click
+        map.on('click', (event) => {
+            const coords = [event.lngLat.lng, event.lngLat.lat];
+            if (customMarker) {
+                customMarker.remove(); // Remove the previous marker if it exists
+            }
+            customMarker = new mapboxgl.Marker().setLngLat(coords).addTo(map); // Add new marker
+            customLocation = coords; // Set custom location
+            instructionsDiv.innerHTML = `Custom location set at: [${coords[0]}, ${coords[1]}]`;
+            instructionsDiv.style.display = 'block';
+        });
+
+        // Button event listeners
+        document.getElementById('ticketCounterBtn').addEventListener('click', function () {
+            navigateToFacility(facilities.ticketCounter, 'Ticket Counter', customLocation);
+        });
+
+        document.getElementById('restroomBtn').addEventListener('click', function () {
+            navigateToFacility(facilities.restroom, 'Restroom', customLocation);
+        });
+
+        document.getElementById('platformBtn').addEventListener('click', function () {
+            navigateToFacility(facilities.platform, 'Platform', customLocation);
+        });
+
+        // Search functionality
+        document.getElementById('searchBtn').addEventListener('click', function () {
+            const searchTerm = document.getElementById('searchBox').value.toLowerCase();
+            // Example nearby locations (you can expand this list)
+            const searchLocations = {
+                'food court': [72.8370, 18.9400], // Example coordinates
+                'waiting area': [72.8380, 18.9415] // Example coordinates
+            };
+
+            if (searchLocations[searchTerm]) {
+                navigateToFacility(searchLocations[searchTerm], searchTerm, customLocation);
+            } else {
+                alert('Location not found. Please try another.');
+            }
+        });
+
+        // Set My Location button
+        document.getElementById('setLocationBtn').addEventListener('click', function () {
+            if (!customLocation) {
+                alert('Please click on the map to set your location first.');
+            } else {
+                instructionsDiv.innerHTML = `Custom location set at: [${customLocation[0]}, ${customLocation[1]}]`;
+                instructionsDiv.style.display = 'block';
+            }
+        });
+
+        // Clear My Location button
+        document.getElementById('clearLocationBtn').addEventListener('click', function () {
+            if (customMarker) {
+                customMarker.remove(); // Remove the marker
+                customMarker = null; // Clear the custom marker variable
+                customLocation = null; // Clear the custom location
+                instructionsDiv.innerHTML = 'Custom location cleared.';
+                instructionsDiv.style.display = 'block';
+            } else {
+                alert('No custom location set to clear.');
+            }
+        });
+
+        // Start Voice Navigation
+        document.getElementById('voiceNavigationButton').addEventListener('click', function () {
+            const speech = new SpeechSynthesisUtterance();
+        speech.text = "Welcome to CST Railway Station Navigation System. Follow the signs to your destination.";
+        speech.lang = "en-US";
+            window.speechSynthesis.speak(speech);
+        });
+
+    </script>
+
+</body>
+
+</html>
